@@ -17,7 +17,9 @@ from rich.table import Table
 
 from scopeready import __description__, __title__, __version__
 from scopeready.applicability import profile_from_flags
-from scopeready.config import TAXONOMY_DIR
+from scopeready.chunking import HeuristicBudget, chunk_documents
+from scopeready.config import FIXTURE_CORPUS_DIR, TAXONOMY_DIR
+from scopeready.ingest import IngestError, read_directory
 from scopeready.models import Granularity, SkipReason
 from scopeready.taxonomy import (
     Taxonomy,
@@ -130,4 +132,59 @@ def taxonomy_select(
     out.print(table)
     err.print(
         f"{len(selection.applicable)} of {len(taxonomy)} categories would be asked"
+    )
+
+
+@app.command()
+def ingest(
+    corpus_dir: Annotated[
+        Path, typer.Argument(help="Directory of Markdown files with front matter.")
+    ] = FIXTURE_CORPUS_DIR,
+    show_chunks: Annotated[
+        bool, typer.Option("--show-chunks", help="Print every chunk with its path.")
+    ] = False,
+) -> None:
+    """Read a corpus directory and report what it contains.
+
+    Nothing is stored yet: this is the command that answers whether the files
+    parse and whether the corpus is shaped the way the run assumes.
+    """
+    try:
+        result = read_directory(corpus_dir)
+    except IngestError as error:
+        err.print(f"[red]cannot read the corpus[/red]\n{error}")
+        raise typer.Exit(code=1) from error
+
+    budget = HeuristicBudget()
+    chunks, report = chunk_documents(result.documents, budget)
+
+    table = Table(title=f"Corpus at {corpus_dir}")
+    table.add_column("document")
+    table.add_column("kind")
+    table.add_column("role")
+    table.add_column("parent")
+    table.add_column("chunks", justify="right")
+    for document in result.documents:
+        count = sum(1 for chunk in chunks if chunk.doc_id == document.doc_id)
+        table.add_row(
+            document.doc_id,
+            document.provenance.source_kind.value,
+            document.corpus_role.value,
+            document.parent_doc_id or "",
+            str(count),
+        )
+    out.print(table)
+
+    if show_chunks:
+        for chunk in chunks:
+            path = " / ".join(chunk.heading_path) or "—"
+            out.print(f"[bold]{chunk.chunk_id}[/bold]  [dim]{path}[/dim]")
+            out.print(chunk.text)
+            out.print()
+
+    err.print(
+        f"{result.requirements} requirement and {result.contexts} context documents, "
+        f"{report.chunks} chunks "
+        f"({report.oversplit_chunks} split below block level, "
+        f"{report.title_only_documents} title-only)"
     )
