@@ -1,0 +1,64 @@
+[project]
+name = "scopeready"
+version = "0.1.0"
+description = "Requirements gap detection for software project scopes"
+requires-python = ">=3.13"
+dependencies = [
+    "pydantic>=2.13.5",
+    "typer>=0.20.0",
+    "pyyaml>=6.0.2",
+    "numpy>=2.3.0",
+    "httpx>=0.28.1",
+]
+
+[project.optional-dependencies]
+# Neural embeddings pull torch (~2.5 GB). The stub embedder runs the whole
+# pipeline without them, so this stays an extra rather than a hard dependency.
+embeddings = [
+    "sentence-transformers>=5.1.0",
+]
+
+[project.scripts]
+scopeready = "scopeready.cli:app"
+
+[dependency-groups]
+dev = [
+    "mypy>=1.18.0",
+    "pytest>=8.4.0",
+    "pytest-asyncio>=1.2.0",
+    "ruff>=0.16.5",
+    "types-pyyaml>=6.0.12",
+]
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+# Strict mode silently skips an unmarked `async def test_`, leaving the suite
+# green while the concurrency tests never run. Auto mode also removes the
+# untyped @pytest.mark.asyncio decorator that mypy --strict complains about.
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+markers = [
+    "model: needs a downloaded embedding model (deselect with '-m \"not model\"')",
+    "ollama: needs a running Ollama server (deselect with '-m \"not ollama\"')",
+]
+
+[tool.ruff]
+target-version = "py313"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+files = ["src", "tests"]
+
+[[tool.mypy.overrides]]
+module = "sentence_transformers.*"
+ignore_missing_imports = true

@@ -1,0 +1,34 @@
+# Secrets. Local Ollama needs no key; the rule is kept ahead of a cloud fallback.
+.env
+.env.*
+
+# Real Jira/Confluence/Teams exports — customer IP under NDA. Never committed.
+data/local/
+*.db
+*.db-wal
+*.db-shm
+
+# Model response cache and run artifacts
+.cache/
+runs/
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+
+# Editors
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# macOS
+.DS_Store
