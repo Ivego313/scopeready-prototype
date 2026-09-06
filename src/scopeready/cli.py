@@ -17,16 +17,19 @@ from rich.table import Table
 
 from scopeready import __description__, __title__, __version__
 from scopeready.applicability import profile_from_flags
-from scopeready.chunking import HeuristicBudget, chunk_documents
-from scopeready.config import FIXTURE_CORPUS_DIR, TAXONOMY_DIR
+from scopeready.chunking import HeuristicBudget, chunk_document, chunk_documents
+from scopeready.config import DEFAULT_DB, FIXTURE_CORPUS_DIR, TAXONOMY_DIR
+from scopeready.corpus import CorpusError, SqliteCorpus
 from scopeready.ingest import IngestError, read_directory
 from scopeready.models import Granularity, SkipReason
+from scopeready.store import IndexedChunk
 from scopeready.taxonomy import (
     Taxonomy,
     TaxonomyError,
     load_taxonomy,
     select_categories,
 )
+from scopeready.text import build_context_text, normalize_for_index
 
 app = typer.Typer(name=__title__, help=__description__, no_args_is_help=True)
 taxonomy_app = typer.Typer(help="Inspect and check the rubric.", no_args_is_help=True)
@@ -188,3 +191,89 @@ def ingest(
         f"({report.oversplit_chunks} split below block level, "
         f"{report.title_only_documents} title-only)"
     )
+
+
+DbPath = Annotated[Path, typer.Option("--db", help="SQLite corpus file.")]
+
+
+@app.command()
+def index(
+    corpus_dir: Annotated[
+        Path, typer.Argument(help="Directory of Markdown files with front matter.")
+    ] = FIXTURE_CORPUS_DIR,
+    db: DbPath = DEFAULT_DB,
+    reset: Annotated[
+        bool, typer.Option("--reset", help="Rebuild the file from scratch.")
+    ] = True,
+) -> None:
+    """Chunk a corpus directory and write it into a SQLite file."""
+    try:
+        result = read_directory(corpus_dir)
+    except IngestError as error:
+        err.print(f"[red]cannot read the corpus[/red]\n{error}")
+        raise typer.Exit(code=1) from error
+
+    budget = HeuristicBudget()
+    try:
+        with SqliteCorpus.open(db, reset=reset) as store:
+            store.add_documents(result.documents)
+            for document in result.documents:
+                chunks, report = chunk_document(document, budget)
+                store.add_chunks(
+                    [
+                        IndexedChunk(
+                            chunk=chunk,
+                            context_text=build_context_text(
+                                document.provenance.title, chunk.heading_path
+                            ),
+                            index_text=normalize_for_index(chunk.text),
+                            token_count=budget.count_tokens(chunk.text),
+                            oversplit=report.oversplit_chunks > 0,
+                        )
+                        for chunk in chunks
+                    ]
+                )
+            store.integrity_check()
+            stats = store.stats()
+    except CorpusError as error:
+        err.print(f"[red]{error}[/red]")
+        raise typer.Exit(code=1) from error
+
+    err.print(
+        f"indexed {stats.documents} documents "
+        f"({stats.requirement_documents} requirement, "
+        f"{stats.context_documents} context) "
+        f"and {stats.chunks} chunks into {db}"
+    )
+
+
+@app.command()
+def search(
+    query: Annotated[str, typer.Argument(help="What to look for.")],
+    db: DbPath = DEFAULT_DB,
+    limit: Annotated[int, typer.Option("--limit", help="How many results.")] = 5,
+) -> None:
+    """Search the indexed corpus lexically and show what comes back."""
+    try:
+        with SqliteCorpus.open(db) as store:
+            hits = store.search_lexical(query, limit=limit)
+    except CorpusError as error:
+        err.print(f"[red]{error}[/red]")
+        raise typer.Exit(code=1) from error
+
+    if not hits:
+        err.print("[yellow]nothing matched[/yellow]")
+        return
+    table = Table(title=f"Lexical search: {query!r}")
+    table.add_column("chunk")
+    table.add_column("score", justify="right")
+    table.add_column("section")
+    table.add_column("text")
+    for hit in hits:
+        table.add_row(
+            hit.chunk.chunk_id,
+            f"{hit.score:.2f}",
+            " / ".join(hit.chunk.heading_path) or "—",
+            hit.chunk.text[:90].replace("\n", " "),
+        )
+    out.print(table)
