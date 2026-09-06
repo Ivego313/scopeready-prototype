@@ -33,7 +33,9 @@ from scopeready.models import Chunk, Usage
 # set the content should already be clean, but stripping it is one line and the
 # failure it prevents is a whole run.
 _THINK_BLOCK = re.compile(r"^\s*<think>.*?</think>\s*", re.DOTALL)
-_WORD = re.compile(r"[a-z0-9]+")
+# Fragment identifiers as the retrieved-fragments block renders them, each on a
+# line of its own.
+_FRAGMENT_ID = re.compile(r"^\[([^\]\n]+)\]$", re.M)
 
 
 class ModelError(RuntimeError):
@@ -149,14 +151,23 @@ class OllamaBackend:
                 {"role": "system", "content": request.system},
                 {"role": "user", "content": request.content},
             ],
-            # The JSON Schema is used as a decoding grammar and nothing else.
-            # Measured on qwen3-vl:8b: the same request with and without the
-            # schema's `description` entries reports an identical
-            # prompt_eval_count of 28, so the docstrings never reach the model.
-            # Two consequences. The answer format has to be written into the
-            # prompt text by `prompts.py` rather than carried by the schema. And
-            # structure survives the grammar while bounds do not — `minimum`,
-            # `maxLength` and `format` are dropped, so the Pydantic validators
+            # The JSON Schema constrains decoding. Two things were measured
+            # on qwen3-vl:8b rather than assumed, because both change how this
+            # pipeline should be written.
+            #
+            # Stripping every `description` from the schema left the reported
+            # prompt token count unchanged, so a docstring on an answer model
+            # cannot be relied on to reach the model: `prompts.py` writes the
+            # answer format into the prompt text instead.
+            #
+            # Setting `format` at all, on identical content, raised the reported
+            # prompt tokens from 2152 to 5221 and dropped generation from 20.7
+            # to 0.7 tokens per second. The cause is not established by one
+            # measurement; the consequence is, and it belongs in the README:
+            # on this machine, structured output is the dominant cost of a run.
+            #
+            # Structure survives the grammar and bounds do not — `minimum`,
+            # `maxLength` and `format` are dropped — so the Pydantic validators
             # are the real check, not this field.
             "format": schema.model_json_schema(),
             "stream": False,
@@ -285,21 +296,18 @@ class StubBackend:
                 for name in fields
             }
         if kind == "probe":
-            return self._probe(subject)
+            return self._probe(subject, request.tail)
         if kind == "refute":
-            return self._refute(subject)
+            return self._refute(subject, request.tail)
         if kind == "questions":
             return self._questions(request)
         msg = f"the stub backend has no answer for a {request.label!r} call"
         raise ModelError(msg)
 
-    def _probe(self, category_id: str) -> dict[str, Any]:
+    def _probe(self, category_id: str, tail: str) -> dict[str, Any]:
         verdict = self._verdicts.get(category_id, "absent")
-        evidence = (
-            [self._quote(category_id)]
-            if verdict in {"covered", "partial"} and self._chunks
-            else []
-        )
+        quote = self._quote(tail) if verdict in {"covered", "partial"} else None
+        evidence = [quote] if quote else []
         return {
             "verdict": verdict,
             "confidence": 0.7,
@@ -310,11 +318,12 @@ class StubBackend:
             "reasoning": f"Stub verdict {verdict!r} for {category_id}.",
         }
 
-    def _refute(self, category_id: str) -> dict[str, Any]:
+    def _refute(self, category_id: str, tail: str) -> dict[str, Any]:
         closes = category_id in self._closes
+        quote = self._quote(tail) if closes else None
         return {
-            "closes_gap": closes,
-            "evidence": [self._quote(category_id)] if closes and self._chunks else [],
+            "closes_gap": closes and quote is not None,
+            "evidence": [quote] if quote else [],
             "reasoning": (
                 f"Stub refutation for {category_id}: "
                 f"{'the fragments settle it' if closes else 'nothing on topic'}."
@@ -333,27 +342,32 @@ class StubBackend:
             ]
         }
 
-    def _quote(self, topic: str) -> dict[str, str]:
-        """Pick a real chunk and quote one of its sentences verbatim.
+    def _quote(self, tail: str) -> dict[str, str] | None:
+        """Quote the top fragment retrieval actually surfaced for this call.
 
-        Chosen by word overlap with the topic, so the output reads like an
-        answer rather than like noise, and always passes the engine's verbatim
-        check — the stub must not be the reason a run looks broken.
+        Not a chunk picked by word overlap with the category name: that scores
+        long chunks highest and made the offline report cite a page about
+        latency as proof of a deletion policy, which reads as a broken engine
+        rather than a stubbed one. Citing what retrieval returned is also what a
+        real model does, so the shape of the answer stays honest.
         """
-        wanted = set(_WORD.findall(topic.replace("_", " ")))
-        best = max(
-            self._chunks,
-            key=lambda chunk: (
-                len(wanted & set(_WORD.findall(chunk.text.lower()))),
-                -len(chunk.chunk_id),
-                chunk.chunk_id,
-            ),
-        )
-        sentence = next(
-            (line.strip() for line in best.text.splitlines() if len(line.strip()) > 24),
-            best.text.strip(),
-        )
-        return {"chunk_id": best.chunk_id, "quote": sentence}
+        by_id = {chunk.chunk_id: chunk for chunk in self._chunks}
+        for chunk_id in _FRAGMENT_ID.findall(tail):
+            chunk = by_id.get(chunk_id)
+            if chunk is None:
+                continue
+            sentence = next(
+                (
+                    line.strip()
+                    for line in chunk.text.splitlines()
+                    if len(line.strip()) > 30
+                ),
+                chunk.text.strip(),
+            )
+            return {"chunk_id": chunk.chunk_id, "quote": sentence}
+        # Nothing was retrieved, so there is nothing honest to cite. The engine
+        # then downgrades the coverage claim, which is the behaviour under test.
+        return None
 
 
 class CachingBackend:

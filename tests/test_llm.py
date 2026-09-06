@@ -44,9 +44,24 @@ def chunks() -> tuple[Chunk, ...]:
     )
 
 
-def _request(label: str = "probe:roles_and_permissions") -> ModelRequest:
+def _fragments(*chunks: Chunk) -> str:
+    """A tail shaped like the one `prompts.py` builds.
+
+    The stub cites whatever retrieval surfaced, so a tail with no fragments in
+    it means there is nothing honest to quote — which is itself a case worth
+    testing.
+    """
+    rendered = "\n\n".join(
+        f"[{chunk.chunk_id}]\n<<<\n{chunk.text}\n>>>" for chunk in chunks
+    )
+    return f"## Retrieved fragments\n{rendered}\n"
+
+
+def _request(
+    label: str = "probe:roles_and_permissions", tail: str = ""
+) -> ModelRequest:
     return ModelRequest(
-        system="You audit requirements.", prefix="CORPUS", tail="ASK", label=label
+        system="You audit requirements.", prefix="CORPUS", tail=tail, label=label
     )
 
 
@@ -66,10 +81,12 @@ def test_the_context_window_is_always_stated() -> None:
 
 def test_the_answer_schema_travels_with_the_request() -> None:
     body = OllamaBackend(model="m", url="http://x", num_ctx=1024).body(
-        _request(), ProbeResult
+        _request(tail="ASK"), ProbeResult
     )
     assert body["format"]["properties"]["verdict"]
     assert body["messages"][0]["role"] == "system"
+    # The invariant prefix and the varying tail reach the model as one message,
+    # in that order: everything before the tail is what the cache can reuse.
     assert body["messages"][1]["content"] == "CORPUSASK"
 
 
@@ -112,7 +129,7 @@ async def test_the_stub_quotes_the_corpus_verbatim(chunks: tuple[Chunk, ...]) ->
     # The engine rejects any quote it cannot find in the named chunk, so a stub
     # that invented text would make every offline run look broken.
     backend = StubBackend(chunks, verdicts={"roles_and_permissions": "covered"})
-    record = await backend.complete(_request(), ProbeResult)
+    record = await backend.complete(_request(tail=_fragments(chunks[0])), ProbeResult)
     quoted = record.answer.evidence[0]
     source = next(chunk for chunk in chunks if chunk.chunk_id == quoted.chunk_id)
     assert quoted.quote in source.text
@@ -120,8 +137,9 @@ async def test_the_stub_quotes_the_corpus_verbatim(chunks: tuple[Chunk, ...]) ->
 
 async def test_the_stub_is_deterministic(chunks: tuple[Chunk, ...]) -> None:
     backend = StubBackend(chunks, verdicts={"roles_and_permissions": "covered"})
-    first = await backend.complete(_request(), ProbeResult)
-    second = await backend.complete(_request(), ProbeResult)
+    request = _request(tail=_fragments(*chunks))
+    first = await backend.complete(request, ProbeResult)
+    second = await backend.complete(request, ProbeResult)
     assert first.answer == second.answer
 
 
@@ -129,15 +147,26 @@ async def test_the_stub_reaches_every_branch(chunks: tuple[Chunk, ...]) -> None:
     backend = StubBackend(
         chunks, verdicts={"a_covered": "covered"}, closes=("a_closed",)
     )
-    covered = await backend.complete(_request("probe:a_covered"), ProbeResult)
-    absent = await backend.complete(_request("probe:a_gap"), ProbeResult)
-    closed = await backend.complete(_request("refute:a_closed"), Refutation)
-    open_gap = await backend.complete(_request("refute:a_gap"), Refutation)
+    tail = _fragments(*chunks)
+    covered = await backend.complete(_request("probe:a_covered", tail), ProbeResult)
+    absent = await backend.complete(_request("probe:a_gap", tail), ProbeResult)
+    closed = await backend.complete(_request("refute:a_closed", tail), Refutation)
+    open_gap = await backend.complete(_request("refute:a_gap", tail), Refutation)
 
     assert covered.answer.verdict is Verdict.COVERED
     assert absent.answer.verdict is Verdict.ABSENT
     assert closed.answer.closes_gap and closed.answer.evidence
     assert not open_gap.answer.closes_gap
+
+
+async def test_a_coverage_claim_with_nothing_retrieved_carries_no_quote(
+    chunks: tuple[Chunk, ...],
+) -> None:
+    # Nothing was retrieved, so there is nothing honest to cite. The engine then
+    # downgrades the claim, which is exactly the path worth exercising offline.
+    backend = StubBackend(chunks, verdicts={"roles_and_permissions": "covered"})
+    record = await backend.complete(_request(), ProbeResult)
+    assert record.answer.evidence == ()
 
 
 async def test_the_stub_refuses_a_call_it_was_not_built_for() -> None:
@@ -160,8 +189,9 @@ async def test_a_repeated_call_is_served_from_disk(
 ) -> None:
     inner = StubBackend(chunks, verdicts={"roles_and_permissions": "covered"})
     cached = CachingBackend(inner, tmp_path)
-    first = await cached.complete(_request(), ProbeResult)
-    second = await cached.complete(_request(), ProbeResult)
+    request = _request(tail=_fragments(*chunks))
+    first = await cached.complete(request, ProbeResult)
+    second = await cached.complete(request, ProbeResult)
 
     assert not first.cached and second.cached
     assert first.answer == second.answer
@@ -184,7 +214,7 @@ async def test_the_model_name_is_part_of_the_key(tmp_path: Path) -> None:
 async def test_refresh_bypasses_the_cache(
     tmp_path: Path, chunks: tuple[Chunk, ...]
 ) -> None:
-    request = _request()
+    request = _request(tail=_fragments(*chunks))
     stub = StubBackend(chunks, verdicts={"roles_and_permissions": "covered"})
     await CachingBackend(stub, tmp_path).complete(request, ProbeResult)
     again = await CachingBackend(stub, tmp_path, refresh=True).complete(
@@ -199,7 +229,7 @@ async def test_a_cached_entry_is_readable(
     # The cache doubles as the structural log of a run, so an entry has to be
     # something a person can open and read.
     cached = CachingBackend(StubBackend(chunks), tmp_path)
-    await cached.complete(_request(), ProbeResult)
+    await cached.complete(_request(tail=_fragments(*chunks)), ProbeResult)
     stored = json.loads(next(tmp_path.glob("*.json")).read_text())
     assert stored["label"] == "probe:roles_and_permissions"
     assert stored["answer"]["verdict"] == "absent"
