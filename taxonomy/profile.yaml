@@ -1,0 +1,79 @@
+# Project properties the applicability gate switches categories on.
+#
+# Every question must be answerable from the corpus. "Is this a fixed-price
+# contract" is here because a fixed-price contract is what makes a change
+# request cost money; "is this a good team" is not, because no document says so.
+version: "1"
+
+features:
+  - id: has_payments
+    title: Handles money
+    question: >-
+      Does the project take, hold, refund or pay out money, including
+      subscriptions, in-app purchases and marketplace payouts?
+
+  - id: has_personal_data
+    title: Stores personal data
+    question: >-
+      Does the project store data about identifiable people, such as names,
+      email addresses, phone numbers, location or behavioural profiles?
+
+  - id: has_external_integrations
+    title: Depends on third-party services
+    question: >-
+      Does the project call an API, SDK or service owned by somebody other than
+      the customer and the executor?
+
+  - id: has_multiple_roles
+    title: More than one kind of user
+    question: >-
+      Do different people see different things or hold different rights in the
+      product, for example an admin and an ordinary user?
+
+  - id: has_existing_codebase
+    title: Builds on existing code
+    question: >-
+      Is the work an extension of, or a migration from, a codebase or system
+      that already exists rather than a project starting from nothing?
+
+  - id: has_end_user_interface
+    title: Has a user interface
+    question: >-
+      Does the project deliver an interface a human uses directly, as opposed to
+      only a backend service, library or data pipeline?
+
+  - id: is_multilingual
+    title: Ships in more than one language
+    question: >-
+      Is the product expected to be delivered in more than one language, region
+      or locale?
+
+  - id: is_game_project
+    title: Is a game
+    question: >-
+      Is the deliverable a game or a component of one, such as a game client,
+      game server, live-ops tooling or an in-game economy?
+
+  - id: targets_console_platforms
+    title: Ships on consoles
+    question: >-
+      Is the product expected to ship on a closed platform that certifies
+      builds, such as PlayStation, Xbox, Nintendo Switch or a console store?
+
+  - id: is_fixed_price
+    title: Fixed-price engagement
+    question: >-
+      Is the engagement priced as a fixed scope for a fixed budget, rather than
+      as time and materials or a staffed team?
+
+  - id: executor_owns_infrastructure
+    title: Executor runs the infrastructure
+    question: >-
+      Will the executor host, operate or be answerable for the running system
+      after delivery, rather than handing it to the customer to run?
+
+  - id: involves_data_migration
+    title: Moves existing data
+    question: >-
+      Does the work require moving, converting or backfilling data that already
+      exists in another system or another schema?

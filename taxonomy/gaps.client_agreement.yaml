@@ -1,0 +1,469 @@
+# The scope-agreement rubric: what a software contract has to say before the
+# work starts, and what it costs when it does not.
+#
+# Weights are normalized to (0, 1] so that one severity threshold means the same
+# thing for every category. They are all `seed` — derived from general reasoning
+# about where fixed-price projects actually lose money, not measured. Only a
+# harvest over real closed projects can move a weight to `calibrated`, and until
+# then the ordering between weights carries more meaning than any single number.
+version: "1"
+
+categories:
+  # --- what the two sides agreed the work is --------------------------------
+
+  - id: acceptance_criteria
+    title: Acceptance criteria
+    granularity: [epic, ticket]
+    weight: 0.9
+    weight_source: seed
+    applies_when: "true"
+    probe: >-
+      Does the requirement state how anyone would decide that the work is done
+      and correct — observable conditions, expected behaviour or a definition of
+      done that someone other than the author could check?
+    covered_when: >-
+      There are conditions a reviewer could test against, stated as outcomes
+      rather than as intentions, covering at least the main success path.
+    insufficient_when: >-
+      Only the happy path is described while error, empty and rejected states
+      are not; or the criteria restate the title in other words; or acceptance
+      is delegated to a person's judgement ("looks right", "as discussed").
+    retrieval_queries:
+      - acceptance criteria definition of done
+      - how we verify this is complete
+      - QA sign-off testable conditions
+    why_it_costs: >-
+      Without written criteria the argument at handover is settled by whoever is
+      more insistent, and rework at that point is unpaid by construction.
+
+  - id: out_of_scope
+    title: Explicit out-of-scope list
+    granularity: [project, epic]
+    weight: 0.9
+    weight_source: seed
+    applies_when: "true"
+    probe: >-
+      Does the corpus state anything the project explicitly will not deliver, as
+      a boundary rather than as an omission?
+    covered_when: >-
+      There is a named exclusion — a feature, platform, integration or phase —
+      written as a decision, not merely absent from the requirements.
+    insufficient_when: >-
+      Exclusions appear only inside one ticket's discussion, or are phrased as
+      "later" or "phase two" without saying they are outside this engagement.
+    retrieval_queries:
+      - out of scope not included exclusions
+      - will not be delivered in this phase
+      - explicitly excluded from the project
+    why_it_costs: >-
+      Everything a customer imagined and nobody wrote down is, in their reading,
+      included; an exclusion list is the only cheap moment to disagree.
+
+  - id: change_request_process
+    title: Change request process and its price
+    granularity: [project]
+    weight: 0.8
+    weight_source: seed
+    applies_when: is_fixed_price
+    probe: >-
+      Does the corpus state how a change to the agreed scope is requested,
+      approved and paid for?
+    covered_when: >-
+      There is a stated route for a scope change — who raises it, who approves
+      it, and how the cost or schedule effect is settled.
+    insufficient_when: >-
+      A process is named but not priced, or approval is described without saying
+      who has authority to give it.
+    retrieval_queries:
+      - change request process approval
+      - scope change additional cost estimate
+      - how new requirements are handled mid-project
+    why_it_costs: >-
+      On a fixed-price contract without an agreed route, every change becomes a
+      negotiation held while the deadline is already moving.
+
+  - id: roles_and_permissions
+    title: Roles and access rights
+    granularity: [project, epic, ticket]
+    weight: 0.85
+    weight_source: seed
+    applies_when: has_multiple_roles
+    probe: >-
+      Does the corpus state which kinds of user exist and what each is allowed
+      to see and do?
+    covered_when: >-
+      Roles are named and at least the rights that differ between them are
+      stated, including who may perform destructive or administrative actions.
+    insufficient_when: >-
+      Roles are named without their rights; or only the privileged role is
+      described while what an ordinary user cannot do is left implicit.
+    retrieval_queries:
+      - user roles and permissions matrix
+      - who can edit delete approve
+      - admin rights access control
+    why_it_costs: >-
+      Access rules discovered during implementation are re-implemented across
+      every screen already built, and a wrong guess is a security incident.
+
+  - id: hosting_and_deployment
+    title: Hosting, deployment and infrastructure ownership
+    granularity: [project]
+    weight: 0.7
+    weight_source: seed
+    applies_when: "true"
+    probe: >-
+      Does the corpus state where the system runs, who owns the accounts and
+      infrastructure it runs on, and how a release reaches production?
+    covered_when: >-
+      The hosting arrangement is named along with who holds the accounts, and
+      there is a stated path from a build to a running environment.
+    insufficient_when: >-
+      A cloud provider is named but account ownership is not; or environments
+      are mentioned without saying who provisions and pays for them.
+    retrieval_queries:
+      - hosting environment deployment production
+      - who owns the cloud account infrastructure
+      - CI CD release process environments
+    why_it_costs: >-
+      Infrastructure nobody agreed to own is provisioned by the executor and
+      billed to the executor, often after the project has been invoiced.
+
+  - id: legacy_constraints
+    title: Existing codebase constraints and technical debt
+    granularity: [project, epic]
+    weight: 0.7
+    weight_source: seed
+    applies_when: has_existing_codebase
+    probe: >-
+      Does the corpus state what in the existing system constrains this work —
+      versions that cannot change, code that cannot be touched, or known debt
+      the new work must live with?
+    covered_when: >-
+      At least one concrete constraint of the existing system is stated, with
+      enough detail to plan around it.
+    insufficient_when: >-
+      The existing system is referenced without saying what about it is fixed;
+      or constraints are described as "legacy" without naming versions,
+      interfaces or areas that must not be changed.
+    retrieval_queries:
+      - legacy system constraints existing code
+      - cannot be changed backwards compatibility
+      - technical debt known limitations
+    why_it_costs: >-
+      An estimate made against a clean design and delivered against an existing
+      one is wrong by the whole cost of the difference.
+
+  - id: warranty_period
+    title: Warranty period after delivery
+    granularity: [project]
+    weight: 0.6
+    weight_source: seed
+    applies_when: is_fixed_price
+    probe: >-
+      Does the corpus state how long after delivery the executor fixes defects
+      free of charge, and what counts as a defect rather than a change?
+    covered_when: >-
+      A period is stated together with what it covers, so that a post-delivery
+      report can be classified as warranty work or as new work.
+    insufficient_when: >-
+      A period is stated with no definition of a defect, which leaves every
+      post-delivery request arguable.
+    retrieval_queries:
+      - warranty period bug fixing after delivery
+      - support obligations post launch
+      - defect liability period
+    why_it_costs: >-
+      Without a boundary, the warranty is whatever the customer still wants,
+      for as long as they want it.
+
+  # --- data, money and the outside world ------------------------------------
+
+  - id: data_lifecycle_gdpr
+    title: Data deletion, export and retention
+    granularity: [project, epic]
+    weight: 0.75
+    weight_source: seed
+    applies_when: has_personal_data
+    probe: >-
+      Does the corpus state what happens to a person's data when they ask for
+      it to be deleted or exported, and how long data is kept?
+    covered_when: >-
+      Deletion or export behaviour is described concretely — what is removed,
+      what is retained and for how long — rather than by naming a regulation.
+    insufficient_when: >-
+      GDPR is cited without saying what the system does; or deletion is
+      described for the main record while derived data, backups, logs and
+      analytics copies are not mentioned.
+    retrieval_queries:
+      - data deletion right to be forgotten
+      - export my data retention period
+      - GDPR personal data handling
+    why_it_costs: >-
+      Deletion that has to reach analytics, backups and third-party processors
+      is an architectural requirement; discovered late, it is a rewrite.
+
+  - id: payments_pci
+    title: Payments and cardholder data
+    granularity: [project, epic]
+    weight: 0.8
+    weight_source: seed
+    applies_when: has_payments
+    probe: >-
+      Does the corpus state how money moves — which provider is used, who holds
+      the merchant account, and how refunds, failures and chargebacks behave?
+    covered_when: >-
+      A payment provider or flow is named together with the failure cases, and
+      it is clear whether card data ever reaches systems the team builds.
+    insufficient_when: >-
+      A provider is named with no word on refunds, retries or failed payments;
+      or compliance is asserted without saying which party is responsible for
+      it.
+    retrieval_queries:
+      - payment provider checkout refund
+      - PCI compliance cardholder data
+      - failed payment chargeback handling
+    why_it_costs: >-
+      Payment edge cases are where money is actually lost, and touching card
+      data changes the compliance obligations of the whole system.
+
+  - id: third_party_api_limits
+    title: Third-party API limits and key ownership
+    granularity: [project, epic]
+    weight: 0.65
+    weight_source: seed
+    applies_when: has_external_integrations
+    probe: >-
+      Does the corpus state who owns the accounts and keys for external
+      services, what their rate or volume limits are, and what the system does
+      when a service is unavailable?
+    covered_when: >-
+      Ownership of credentials is stated and there is a described behaviour for
+      the limit or outage case.
+    insufficient_when: >-
+      An integration is named with no word on quotas, cost or failure; or keys
+      are assumed to exist without saying who provides and pays for them.
+    retrieval_queries:
+      - API rate limit quota third party
+      - who provides the API key account
+      - external service unavailable fallback
+    why_it_costs: >-
+      A quota discovered in production is an outage, and a key nobody agreed to
+      buy stops the integration on the day of the demo.
+
+  - id: data_migration
+    title: Migration of existing data
+    granularity: [project, epic]
+    weight: 0.65
+    weight_source: seed
+    applies_when: involves_data_migration
+    probe: >-
+      Does the corpus state what existing data must be moved, in what shape it
+      arrives, and what happens to records that do not fit?
+    covered_when: >-
+      The source of the data, its volume or shape, and the handling of invalid
+      or unmappable records are described.
+    insufficient_when: >-
+      Migration is named as a task without a source system, a volume or a rule
+      for records that fail validation; or cutover and rollback are not
+      mentioned.
+    retrieval_queries:
+      - data migration from legacy system
+      - import existing records mapping
+      - cutover rollback plan data
+    why_it_costs: >-
+      Real data is always dirtier than the schema says, and the cost of a
+      migration is decided by the exceptions, not by the mapping.
+
+  # --- non-functional requirements, one metric per sub-topic ----------------
+
+  - id: nfr_performance
+    title: Performance and availability
+    granularity: [project, epic]
+    weight: 0.6
+    weight_source: seed
+    applies_when: has_end_user_interface or executor_owns_infrastructure
+    probe: >-
+      Does the corpus state how fast the system must be or how available it
+      must stay, as numbers rather than as adjectives?
+    covered_when: >-
+      There is a stated figure — a response time, a throughput, a concurrent
+      user count or an uptime target — tied to a named operation or period.
+    insufficient_when: >-
+      Speed is described as "fast", "responsive" or "no lag"; or a number is
+      given with no load or condition under which it must hold.
+    retrieval_queries:
+      - response time latency performance target
+      - uptime SLA availability
+      - concurrent users load expected
+    why_it_costs: >-
+      Performance is an architectural property; a number that arrives after the
+      architecture is chosen is a number that costs a redesign.
+
+  - id: nfr_platforms
+    title: Supported platforms, browsers and devices
+    granularity: [project]
+    weight: 0.55
+    weight_source: seed
+    applies_when: has_end_user_interface
+    probe: >-
+      Does the corpus state which browsers, operating systems, devices or screen
+      sizes the product must support?
+    covered_when: >-
+      A support matrix or an equivalent statement names versions or a policy for
+      deciding them.
+    insufficient_when: >-
+      "Modern browsers" or "mobile friendly" is stated without versions or
+      breakpoints; or desktop support is specified while mobile is left open.
+    retrieval_queries:
+      - supported browsers versions device
+      - mobile responsive screen sizes
+      - minimum OS version requirements
+    why_it_costs: >-
+      One unlisted old browser or one small screen size can cost more than the
+      feature it displays, and it is always found during acceptance.
+
+  - id: nfr_localization
+    title: Localization and regional formats
+    granularity: [project, epic]
+    weight: 0.5
+    weight_source: seed
+    applies_when: is_multilingual
+    probe: >-
+      Does the corpus state which languages and regions are supported, who
+      supplies translations, and how dates, numbers and currencies are formatted?
+    covered_when: >-
+      The languages are named and the source of the translated strings is
+      stated, together with any regional formatting rules.
+    insufficient_when: >-
+      Languages are listed with no word on who translates or when strings
+      arrive; or right-to-left, text expansion and pluralization are unmentioned
+      although a language that needs them is on the list.
+    retrieval_queries:
+      - localization languages translation
+      - date currency number format region
+      - right to left text expansion
+    why_it_costs: >-
+      Retrofitting text extraction and layout for a second language touches
+      every screen already built.
+
+  - id: nfr_accessibility
+    title: Interface accessibility
+    granularity: [project, epic]
+    weight: 0.45
+    weight_source: seed
+    applies_when: has_end_user_interface
+    probe: >-
+      Does the corpus state an accessibility obligation — a standard, a
+      conformance level, or specific requirements such as keyboard navigation
+      or screen reader support?
+    covered_when: >-
+      A standard and level are named, or concrete accessibility behaviours are
+      required of the interface.
+    insufficient_when: >-
+      Accessibility is mentioned as a goal without a level; or a standard is
+      cited with no statement of which parts of the product it covers.
+    retrieval_queries:
+      - accessibility WCAG conformance level
+      - screen reader keyboard navigation
+      - contrast requirements a11y
+    why_it_costs: >-
+      Accessibility is cheap while components are being written and expensive
+      once they exist; in some markets it is also a legal precondition to
+      launch.
+
+  # --- game development vertical: extension by data, not by code ------------
+
+  - id: game_engine_and_version
+    title: Engine, version and toolchain
+    granularity: [project]
+    weight: 0.6
+    weight_source: seed
+    applies_when: is_game_project
+    probe: >-
+      Does the corpus state the engine and its version, and who decides when
+      that version changes?
+    covered_when: >-
+      The engine and a specific version or version policy are stated, along with
+      any required SDKs or plugins.
+    insufficient_when: >-
+      The engine is named without a version; or a version is stated without
+      saying who may upgrade it mid-project.
+    retrieval_queries:
+      - engine version Unity Unreal upgrade
+      - SDK plugin version requirements
+      - toolchain build pipeline game
+    why_it_costs: >-
+      An engine upgrade imposed mid-project can invalidate plugins, build
+      pipelines and platform certification at once.
+
+  - id: platform_certification
+    title: Platform certification requirements
+    granularity: [project]
+    weight: 0.7
+    weight_source: seed
+    applies_when: is_game_project and targets_console_platforms
+    probe: >-
+      Does the corpus state which platform holders must certify the build, who
+      submits it, and how long certification and resubmission are expected to
+      take?
+    covered_when: >-
+      The platforms are named together with who owns the submission and an
+      allowance for certification time in the schedule.
+    insufficient_when: >-
+      Platforms are named with no schedule allowance; or certification is
+      mentioned without saying who holds the developer account and who fixes
+      certification failures.
+    retrieval_queries:
+      - certification submission platform holder
+      - TRC TCR lotcheck requirements
+      - console release approval process
+    why_it_costs: >-
+      A failed certification pass costs weeks that no one budgeted, and the
+      party responsible for fixing it is usually decided after it happens.
+
+  - id: liveops_and_monetization
+    title: Live-ops and monetization model
+    granularity: [project, epic]
+    weight: 0.55
+    weight_source: seed
+    applies_when: is_game_project
+    probe: >-
+      Does the corpus state how the game makes money and what has to be
+      changeable after launch without a client release?
+    covered_when: >-
+      The monetization model is stated and it is clear which content, prices or
+      events must be configurable server-side.
+    insufficient_when: >-
+      A monetization model is named with no word on what is remotely
+      configurable; or live events are assumed without a content pipeline for
+      them.
+    retrieval_queries:
+      - monetization in-app purchase economy
+      - live ops events remote config
+      - server driven content updates
+    why_it_costs: >-
+      Anything hardcoded that live-ops later needs to change becomes a client
+      release, and a client release on console is a certification pass.
+
+  - id: age_rating
+    title: Age rating and content compliance
+    granularity: [project]
+    weight: 0.5
+    weight_source: seed
+    applies_when: is_game_project
+    probe: >-
+      Does the corpus state the target age rating and the content or feature
+      restrictions that follow from it?
+    covered_when: >-
+      A rating or rating board target is named, together with the constraints it
+      places on content, chat, advertising or data collection from minors.
+    insufficient_when: >-
+      A rating is named with no consequences drawn from it; or user-generated
+      content and chat are present with no moderation requirement stated.
+    retrieval_queries:
+      - age rating PEGI ESRB target audience
+      - content restrictions minors COPPA
+      - chat moderation user generated content
+    why_it_costs: >-
+      A rating decided late can forbid a feature already built, and rules about
+      minors reach data collection and advertising across the whole product.
