@@ -53,15 +53,26 @@ def test_context_text_carries_the_title_and_the_section() -> None:
     ("query", "expected"),
     [
         ("data deletion", '"data" OR "deletion"'),
-        ('who owns the "key"', '"who" OR "owns" OR "the" OR "key"'),
-        ("NEAR(a b)", '"NEAR" OR "a" OR "b"'),
+        ('who owns the "key"', '"owns" OR "key"'),
+        ("NEAR(a b)", '"NEAR" OR "b"'),
         ("rate-limit", '"rate" OR "limit"'),
         ("   ", None),
         ("!!!", None),
+        # Only function words: no lexical signal at all, so the lexical channel
+        # stands aside rather than matching the whole corpus through "the".
+        ("what does it do", None),
     ],
 )
 def test_a_query_cannot_carry_fts_syntax(query: str, expected: str | None) -> None:
     assert to_fts_match(query) == expected
+
+
+def test_function_words_do_not_reach_the_lexical_index() -> None:
+    # They match nearly every chunk, and the fusion step reads ranks rather than
+    # scores — so a list of near-zero hits arrives looking as authoritative as a
+    # list of real ones.
+    match = to_fts_match("which permissions does each role have")
+    assert match == '"permissions" OR "role"'
 
 
 def test_presentation_differences_do_not_break_a_quote() -> None:

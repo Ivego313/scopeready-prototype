@@ -1232,12 +1232,8 @@ dependencies = [
     { name = "numpy" },
     { name = "pydantic" },
     { name = "pyyaml" },
-    { name = "typer" },
-]
-
-[package.optional-dependencies]
-embeddings = [
     { name = "sentence-transformers" },
+    { name = "typer" },
 ]
 
 [package.dev-dependencies]
@@ -1255,10 +1251,9 @@ requires-dist = [
     { name = "numpy", specifier = ">=2.3.0" },
     { name = "pydantic", specifier = ">=2.13.5" },
     { name = "pyyaml", specifier = ">=6.0.2" },
-    { name = "sentence-transformers", marker = "extra == 'embeddings'", specifier = ">=5.1.0" },
+    { name = "sentence-transformers", specifier = ">=5.1.0" },
     { name = "typer", specifier = ">=0.20.0" },
 ]
-provides-extras = ["embeddings"]
 
 [package.metadata.requires-dev]
 dev = [

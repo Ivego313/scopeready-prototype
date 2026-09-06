@@ -9,12 +9,10 @@ dependencies = [
     "pyyaml>=6.0.2",
     "numpy>=2.3.0",
     "httpx>=0.28.1",
-]
-
-[project.optional-dependencies]
-# Neural embeddings pull torch (~2.5 GB). The stub embedder runs the whole
-# pipeline without them, so this stays an extra rather than a hard dependency.
-embeddings = [
+    # Pulls torch, which is most of the install size. It is a hard dependency
+    # because the default embedder is a real model: an install where the
+    # default path does not run is an install that teaches the wrong thing.
+    # `--embedder stub` still runs the whole pipeline without loading it.
     "sentence-transformers>=5.1.0",
 ]
 

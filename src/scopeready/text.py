@@ -51,6 +51,24 @@ _PRESENTATION = str.maketrans(
 
 ELLIPSIS = "..."
 
+# Function words are dropped from a lexical query, and this is not cosmetic.
+# Terms are joined with OR, so a natural-language probe phrasing matches nearly
+# every chunk through words like "the" and "does". BM25 scores those hits near
+# zero, but the fusion step reads ranks and not scores — so a list of near-zero
+# hits arrives looking exactly as authoritative as a list of real ones, and the
+# fused order comes out worse than either channel alone. Filtering here is
+# cheaper and more honest than teaching the fusion to distrust one input.
+_STOPWORDS = frozenset(
+    """
+    a about an and any anything are as at be been being both but by can could
+    did do does doing each either for from had has have having he her his how
+    i if in into is it its may might must my no nor not of on once one only or
+    other our out over own shall she should so some such than that the their
+    them then there these they this those through to too under up was we were
+    what when where which while who whom why will with would you your
+    """.split()
+)
+
 
 def normalize_for_index(text: str) -> str:
     """Reduce Markdown to the words a lexical or vector index should see."""
@@ -83,9 +101,12 @@ def to_fts_match(query: str) -> str | None:
     says the same thing in three words instead of six.
     """
     terms = _FTS_TERM.findall(query)
-    if not terms:
+    content = [term for term in terms if term.casefold() not in _STOPWORDS]
+    # A query made only of function words has no lexical signal at all; the
+    # vector channel is what answers it.
+    if not content:
         return None
-    return " OR ".join(f'"{term}"' for term in terms)
+    return " OR ".join(f'"{term}"' for term in content)
 
 
 def normalize_for_match(text: str) -> str:

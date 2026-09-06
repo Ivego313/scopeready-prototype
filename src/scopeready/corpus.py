@@ -24,11 +24,14 @@ would be invisible to retrieval and therefore uncitable.
 import json
 import sqlite3
 from collections.abc import Iterator, Sequence
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from types import TracebackType
 from typing import Any, Self
 
+import numpy as np
+
+from scopeready.embeddings import DTYPE, Vector, cosine_similarity
 from scopeready.models import (
     AuthorSide,
     Chunk,
@@ -356,6 +359,109 @@ class SqliteCorpus:
         # more relevant", which is what the fusion step assumes.
         return tuple(
             ScoredChunk(chunk=_chunk_of(row), score=-float(row["rank"])) for row in rows
+        )
+
+    # --- vectors ------------------------------------------------------------
+
+    def declare_embedding_space(
+        self, *, model_name: str, dimensions: int, max_tokens: int
+    ) -> None:
+        """Record which embedder this file was built with, or check it matches.
+
+        One space per file. A file indexed with one model and queried with
+        another still returns a ranked list, and the ranking is meaningless —
+        which is the worst available failure, because it looks like working
+        software producing poor results.
+        """
+        row = self._connection.execute("SELECT * FROM embedding_space").fetchone()
+        if row is None:
+            with self._connection:
+                self._connection.execute(
+                    """
+                    INSERT INTO embedding_space(
+                        id, model_name, dimensions, max_tokens, created_at)
+                    VALUES (1, ?, ?, ?, ?)
+                    """,
+                    (
+                        model_name,
+                        dimensions,
+                        max_tokens,
+                        datetime.now(UTC).isoformat(),
+                    ),
+                )
+            return
+        stored = (row["model_name"], row["dimensions"], row["max_tokens"])
+        wanted = (model_name, dimensions, max_tokens)
+        if stored != wanted:
+            msg = (
+                f"this corpus was indexed with {stored} and is being queried "
+                f"with {wanted}; rebuild it with --reset rather than mixing "
+                "two embedding spaces"
+            )
+            raise CorpusError(msg)
+
+    def embedding_space(self) -> tuple[str, int, int] | None:
+        row = self._connection.execute("SELECT * FROM embedding_space").fetchone()
+        if row is None:
+            return None
+        return row["model_name"], int(row["dimensions"]), int(row["max_tokens"])
+
+    def add_vectors(self, vectors: Sequence[tuple[int, Vector]]) -> None:
+        rows = [
+            (chunk_pk, np.ascontiguousarray(vector, dtype=DTYPE).tobytes())
+            for chunk_pk, vector in vectors
+        ]
+        with self._connection:
+            self._connection.executemany(
+                "INSERT OR REPLACE INTO embeddings(chunk_pk, vector) VALUES (?, ?)",
+                rows,
+            )
+
+    def search_vector(self, query: Vector, *, limit: int) -> tuple[ScoredChunk, ...]:
+        """Rank chunks by cosine similarity, computed by brute force.
+
+        One project's corpus is thousands of chunks, so a full matrix product is
+        milliseconds and a vector index would be infrastructure bought to save
+        nothing.
+        """
+        space = self.embedding_space()
+        if space is None:
+            return ()
+        dimensions = space[1]
+        rows = self._connection.execute(
+            """
+            SELECT c.*, e.vector
+            FROM embeddings e JOIN chunks c ON c.chunk_pk = e.chunk_pk
+            ORDER BY c.chunk_id
+            """
+        ).fetchall()
+        if not rows:
+            return ()
+
+        vectors = []
+        for row in rows:
+            blob = row["vector"]
+            # A truncated or wrongly-typed blob reshapes into plausible garbage
+            # rather than failing, so the length is checked instead of trusted.
+            if len(blob) != dimensions * 4:
+                msg = (
+                    f"stored vector for {row['chunk_id']} is {len(blob)} bytes, "
+                    f"expected {dimensions * 4}"
+                )
+                raise CorpusError(msg)
+            vectors.append(np.frombuffer(blob, dtype=DTYPE))
+        matrix: Vector = np.ascontiguousarray(np.vstack(vectors), dtype=DTYPE)
+        scores = cosine_similarity(matrix, np.asarray(query, dtype=DTYPE))
+
+        # Ties are broken by chunk id, ascending, the same rule the fusion step
+        # and the report ranking use: the order reaches a prompt, so it may not
+        # depend on how numpy happened to sort equal values.
+        order = sorted(
+            range(len(rows)), key=lambda i: (-float(scores[i]), rows[i]["chunk_id"])
+        )
+        return tuple(
+            ScoredChunk(chunk=_chunk_of(rows[i]), score=float(scores[i]))
+            for i in order[:limit]
         )
 
     def integrity_check(self) -> None:

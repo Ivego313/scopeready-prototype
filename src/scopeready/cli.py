@@ -18,10 +18,17 @@ from rich.table import Table
 from scopeready import __description__, __title__, __version__
 from scopeready.applicability import profile_from_flags
 from scopeready.chunking import HeuristicBudget, chunk_document, chunk_documents
-from scopeready.config import DEFAULT_DB, FIXTURE_CORPUS_DIR, TAXONOMY_DIR
+from scopeready.config import (
+    DEFAULT_DB,
+    DEFAULT_EMBEDDER,
+    FIXTURE_CORPUS_DIR,
+    TAXONOMY_DIR,
+)
 from scopeready.corpus import CorpusError, SqliteCorpus
+from scopeready.embeddings import build_embedder
 from scopeready.ingest import IngestError, read_directory
 from scopeready.models import Granularity, SkipReason
+from scopeready.retrieval import HybridRetriever
 from scopeready.store import IndexedChunk
 from scopeready.taxonomy import (
     Taxonomy,
@@ -194,6 +201,9 @@ def ingest(
 
 
 DbPath = Annotated[Path, typer.Option("--db", help="SQLite corpus file.")]
+EmbedderKey = Annotated[
+    str, typer.Option("--embedder", help="stub, bge-small or gte-modernbert.")
+]
 
 
 @app.command()
@@ -202,23 +212,43 @@ def index(
         Path, typer.Argument(help="Directory of Markdown files with front matter.")
     ] = FIXTURE_CORPUS_DIR,
     db: DbPath = DEFAULT_DB,
+    embedder_key: EmbedderKey = DEFAULT_EMBEDDER,
     reset: Annotated[
         bool, typer.Option("--reset", help="Rebuild the file from scratch.")
     ] = True,
+    lexical_only: Annotated[
+        bool, typer.Option("--lexical-only", help="Skip embedding the chunks.")
+    ] = False,
 ) -> None:
-    """Chunk a corpus directory and write it into a SQLite file."""
+    """Chunk a corpus directory, write it to SQLite and embed the chunks."""
     try:
         result = read_directory(corpus_dir)
     except IngestError as error:
         err.print(f"[red]cannot read the corpus[/red]\n{error}")
         raise typer.Exit(code=1) from error
 
-    budget = HeuristicBudget()
+    try:
+        embedder = build_embedder(embedder_key)
+    except (ValueError, ImportError) as error:
+        err.print(f"[red]{error}[/red]")
+        raise typer.Exit(code=2) from error
+
+    # The chunker measures the window of the model that will actually encode the
+    # text. A heuristic here would let a chunk arrive over the window and be
+    # truncated silently, which shows up only as retrieval getting worse.
+    budget = embedder
     try:
         with SqliteCorpus.open(db, reset=reset) as store:
+            store.declare_embedding_space(
+                model_name=embedder.name,
+                dimensions=embedder.dimensions,
+                max_tokens=embedder.max_tokens,
+            )
             store.add_documents(result.documents)
+            oversplit = 0
             for document in result.documents:
                 chunks, report = chunk_document(document, budget)
+                oversplit += report.oversplit_chunks
                 store.add_chunks(
                     [
                         IndexedChunk(
@@ -234,6 +264,16 @@ def index(
                     ]
                 )
             store.integrity_check()
+
+            embedded = 0
+            if not lexical_only:
+                pending = list(store.iter_unembedded())
+                texts = [text for _, text in pending]
+                vectors = embedder.encode_documents(texts)
+                store.add_vectors(
+                    [(chunk_pk, vectors[i]) for i, (chunk_pk, _) in enumerate(pending)]
+                )
+                embedded = len(pending)
             stats = store.stats()
     except CorpusError as error:
         err.print(f"[red]{error}[/red]")
@@ -242,8 +282,9 @@ def index(
     err.print(
         f"indexed {stats.documents} documents "
         f"({stats.requirement_documents} requirement, "
-        f"{stats.context_documents} context) "
-        f"and {stats.chunks} chunks into {db}"
+        f"{stats.context_documents} context), {stats.chunks} chunks, "
+        f"{embedded} embedded with {embedder.name} "
+        f"({oversplit} split below block level) into {db}"
     )
 
 
@@ -251,28 +292,59 @@ def index(
 def search(
     query: Annotated[str, typer.Argument(help="What to look for.")],
     db: DbPath = DEFAULT_DB,
+    embedder_key: EmbedderKey = DEFAULT_EMBEDDER,
     limit: Annotated[int, typer.Option("--limit", help="How many results.")] = 5,
+    channels: Annotated[
+        bool,
+        typer.Option("--channels", help="Show lexical, vector and fused side by side."),
+    ] = False,
 ) -> None:
-    """Search the indexed corpus lexically and show what comes back."""
+    """Search the indexed corpus and show what each channel returns."""
     try:
+        embedder = build_embedder(embedder_key)
         with SqliteCorpus.open(db) as store:
-            hits = store.search_lexical(query, limit=limit)
-    except CorpusError as error:
+            store.declare_embedding_space(
+                model_name=embedder.name,
+                dimensions=embedder.dimensions,
+                max_tokens=embedder.max_tokens,
+            )
+            results = HybridRetriever(store, embedder).search_channels(
+                query, limit=limit
+            )
+    except (CorpusError, ValueError, ImportError) as error:
         err.print(f"[red]{error}[/red]")
         raise typer.Exit(code=1) from error
 
-    if not hits:
+    if channels:
+        table = Table(title=f"Channels for {query!r}")
+        table.add_column("rank", justify="right")
+        table.add_column("lexical")
+        table.add_column("vector")
+        table.add_column("fused")
+        columns = (results.lexical, results.vector, results.fused)
+        for rank in range(limit):
+            table.add_row(
+                str(rank + 1),
+                *(
+                    column[rank].chunk.chunk_id if rank < len(column) else "—"
+                    for column in columns
+                ),
+            )
+        out.print(table)
+        return
+
+    if not results.fused:
         err.print("[yellow]nothing matched[/yellow]")
         return
-    table = Table(title=f"Lexical search: {query!r}")
+    table = Table(title=f"Search: {query!r}")
     table.add_column("chunk")
     table.add_column("score", justify="right")
     table.add_column("section")
     table.add_column("text")
-    for hit in hits:
+    for hit in results.fused:
         table.add_row(
             hit.chunk.chunk_id,
-            f"{hit.score:.2f}",
+            f"{hit.score:.4f}",
             " / ".join(hit.chunk.heading_path) or "—",
             hit.chunk.text[:90].replace("\n", " "),
         )

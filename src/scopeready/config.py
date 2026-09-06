@@ -24,4 +24,7 @@ DEFAULT_MODEL: Final = "gpt-oss:20b"
 # model. On a 32 GB machine that trades speed for swap.
 DEFAULT_CONCURRENCY: Final = 2
 
-DEFAULT_EMBEDDER: Final = "stub"
+# A real model by default, because the paraphrase case is the whole reason the
+# vector channel exists and the stub cannot demonstrate it. `--embedder stub`
+# is the offline path and the one the test suite uses.
+DEFAULT_EMBEDDER: Final = "bge-small"
