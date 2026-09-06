@@ -8,9 +8,11 @@ Status output goes to stderr and data to stdout, so a report can be piped
 without ANSI escapes landing in the file.
 """
 
+import asyncio
 from pathlib import Path
 from typing import Annotated
 
+import httpx
 import typer
 from rich.console import Console
 from rich.table import Table
@@ -21,13 +23,17 @@ from scopeready.chunking import HeuristicBudget, chunk_document, chunk_documents
 from scopeready.config import (
     DEFAULT_DB,
     DEFAULT_EMBEDDER,
+    DEFAULT_MODEL,
+    DEFAULT_NUM_CTX,
+    DEFAULT_OLLAMA_URL,
     FIXTURE_CORPUS_DIR,
     TAXONOMY_DIR,
 )
-from scopeready.corpus import CorpusError, SqliteCorpus
+from scopeready.corpus import CorpusError, SqliteCorpus, fts5_available
 from scopeready.embeddings import build_embedder
 from scopeready.ingest import IngestError, read_directory
-from scopeready.models import Granularity, SkipReason
+from scopeready.llm import ModelError, OllamaBackend
+from scopeready.models import Granularity, ProbeResult, Refutation, SkipReason
 from scopeready.retrieval import HybridRetriever
 from scopeready.store import IndexedChunk
 from scopeready.taxonomy import (
@@ -349,3 +355,84 @@ def search(
             hit.chunk.text[:90].replace("\n", " "),
         )
     out.print(table)
+
+
+@app.command()
+def doctor(
+    model: Annotated[str, typer.Option("--model", help="Ollama model tag.")] = (
+        DEFAULT_MODEL
+    ),
+    url: Annotated[str, typer.Option("--ollama-url")] = DEFAULT_OLLAMA_URL,
+    num_ctx: Annotated[int, typer.Option("--num-ctx")] = DEFAULT_NUM_CTX,
+    embedder_key: EmbedderKey = DEFAULT_EMBEDDER,
+) -> None:
+    """Check that this machine can actually run an analysis.
+
+    Everything checked here fails late and confusingly otherwise: a SQLite built
+    without FTS5 loses half of retrieval at the first query, a missing model tag
+    fails after the corpus is indexed, and an answer schema the server cannot
+    compile into a grammar fails on the first probe of a long run.
+    """
+    table = Table(title="Environment")
+    table.add_column("check")
+    table.add_column("result")
+    problems = 0
+
+    def record(name: str, ok: bool, detail: str) -> None:
+        nonlocal problems
+        problems += 0 if ok else 1
+        mark = "[green]ok[/green]" if ok else "[red]no[/red]"
+        table.add_row(name, f"{mark}  {detail}")
+
+    record("sqlite FTS5", fts5_available(), "lexical retrieval needs it")
+
+    try:
+        embedder = build_embedder(embedder_key)
+        record(
+            f"embedder {embedder_key}",
+            True,
+            f"{embedder.name}, {embedder.dimensions} dims, "
+            f"{embedder.max_tokens} token window",
+        )
+    except (ValueError, ImportError, OSError) as error:
+        record(f"embedder {embedder_key}", False, str(error)[:120])
+
+    try:
+        taxonomy = load_taxonomy(TAXONOMY_DIR)
+        record(
+            "taxonomy",
+            True,
+            f"{len(taxonomy)} categories, digest {taxonomy.digest}",
+        )
+    except TaxonomyError as error:
+        record("taxonomy", False, str(error)[:120])
+
+    backend = OllamaBackend(model=model, url=url, num_ctx=num_ctx)
+    try:
+        tags = asyncio.run(backend.tags())
+    except ModelError as error:
+        record("ollama", False, str(error)[:120])
+        tags = []
+    else:
+        record("ollama", True, f"{len(tags)} models available")
+        present = any(tag == model or tag.startswith(f"{model}:") for tag in tags)
+        record(
+            f"model {model}",
+            present,
+            "installed" if present else f"not pulled; available: {', '.join(tags)}",
+        )
+        if present:
+            # A schema the server cannot turn into a grammar returns a 400. That
+            # is worth discovering now rather than on the first probe of a run.
+            for schema in (ProbeResult, Refutation):
+                try:
+                    verdict = asyncio.run(backend.check(schema))
+                except (ModelError, httpx.HTTPError) as error:
+                    verdict = f"rejected: {error}"[:120]
+                record(f"schema {schema.__name__}", verdict == "ok", verdict)
+
+    out.print(table)
+    if problems:
+        err.print(f"[yellow]{problems} check(s) failed[/yellow]")
+        raise typer.Exit(code=1)
+    err.print("[green]ready[/green]")
