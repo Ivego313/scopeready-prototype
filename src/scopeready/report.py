@@ -16,13 +16,10 @@ ones that turn a renamed field into an error instead of a silently missing
 section.
 """
 
-from collections.abc import Sequence
-
 from scopeready.models import (
     AnalysisReport,
     CoverageLocation,
     GapFinding,
-    SkipReason,
 )
 
 
@@ -208,24 +205,4 @@ def _cost(report: AnalysisReport) -> str:
         f"| prompt tokens | {usage.prompt_tokens} |\n"
         f"| completion tokens | {usage.completion_tokens} |\n"
         f"| wall clock | {report.wall_clock_seconds:.1f}s |"
-    )
-
-
-def prompt_eval_table(evals: Sequence[tuple[str, int]]) -> str:
-    """The warm-up proof: the first call pays for the prefix and the rest do not.
-
-    Printed rather than argued, because "the cache was reused" is exactly the
-    kind of claim that stays true in a comment long after it has stopped being
-    true in the code.
-    """
-    rows = "\n".join(f"| {label} | {count} |" for label, count in evals)
-    return f"| call | prompt tokens |\n|---|---|\n{rows}"
-
-
-def skip_summary(report: AnalysisReport) -> str:
-    counts: dict[SkipReason, int] = {}
-    for item in report.skipped:
-        counts[item.reason] = counts.get(item.reason, 0) + 1
-    return ", ".join(
-        f"{reason.value}: {count}" for reason, count in sorted(counts.items())
     )

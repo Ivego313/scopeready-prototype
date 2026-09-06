@@ -58,7 +58,7 @@ from scopeready.llm import (
 )
 from scopeready.models import Granularity, ProbeResult, Refutation, SkipReason
 from scopeready.prompts import build_prefix, probe_tail
-from scopeready.report import prompt_eval_table, render_json, render_markdown
+from scopeready.report import render_json, render_markdown
 from scopeready.retrieval import HybridRetriever
 from scopeready.store import IndexedChunk
 from scopeready.taxonomy import (
@@ -844,4 +844,3 @@ def _dry_run(run: _Run) -> None:
         f"largest request about {total + max((size for _, size in tails), default=0)} "
         f"tokens against a window of {DEFAULT_NUM_CTX}"
     )
-    err.print(prompt_eval_table([]).splitlines()[0])
